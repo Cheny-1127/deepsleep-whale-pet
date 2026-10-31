@@ -26,25 +26,25 @@ async function main() {
         fixture.cover=new BrowserWindow({...options,width:1100,height:800});
         await fixture.cover.loadFile(path.join(__dirname,'cover.html'));return;
       }
-      fixture.panel=new BrowserWindow({...options,width:1060,height:770});
+      // 使用正式窗口层的原生窗口选项，仅将页面换成本地合成内容，避免替身漏掉人物激活行为。
+      const loadFile=BrowserWindow.prototype.loadFile;
+      BrowserWindow.prototype.loadFile=function(file,...args){
+        const name=path.basename(file);
+        return loadFile.call(this,['index.html','pet.html'].includes(name)?path.join(__dirname,name):file,...args);
+      };
+      const menuModule=require(${JSON.stringify(path.join(root,'src/app/pet-menu.cjs'))}),makeMenu=menuModule.createPetMenu;
+      menuModule.createPetMenu=options=>fixture.menu=makeMenu({...options,showPanel(){fixture.panelOpens++;options.showPanel();}});
+      const storageModule=require(${JSON.stringify(path.join(root,'src/app/pet-storage.cjs'))}),makeStorage=storageModule.createPetStorage;
+      storageModule.createPetStorage=options=>fixture.storage=makeStorage(options);
+      const {createWindows}=require(${JSON.stringify(path.join(root,'src/app/windows.cjs'))});
+      const snapshot=()=>({state:'idle',activity:{state:'idle',pending:0,working:0,unread:0},planner:{active:[]}});
+      const performAction=name=>name==='store-pet'?fixture.windows.storePet():fixture.windows.showPet();
+      fixture.windows=createWindows({snapshot,performAction,collapseReminders(){}});
+      ipcMain.handle('action',(_event,name)=>performAction(name));
+      fixture.windows.start({showPanelOnStartup:true});
+      fixture.panel=BrowserWindow.getAllWindows().find(win=>win.getBounds().width===1060);
+      fixture.pet=BrowserWindow.getAllWindows().find(win=>win.getBounds().width===220);
       fixture.panel.on('focus',()=>fixture.panelFocus++);
-      fixture.pet=new BrowserWindow({...options,width:220,height:320,frame:false,
-        webPreferences:{preload:${JSON.stringify(path.join(root,'src/ui/preload.cjs'))},contextIsolation:true,nodeIntegration:false,sandbox:true}});
-      fixture.pet.setVisibleOnAllWorkspaces(true,{visibleOnFullScreen:true});
-      const {createPetMenu}=require(${JSON.stringify(path.join(root,'src/app/pet-menu.cjs'))});
-      const {createPetStorage}=require(${JSON.stringify(path.join(root,'src/app/pet-storage.cjs'))});
-      fixture.storage=createPetStorage({getPet:()=>fixture.pet,protect(){},onRestore(){},onChange(){},
-        closeOverlays:()=>fixture.menu.close(),onContextMenu:()=>fixture.menu.open(),onHide(){fixture.storage.hide();fixture.pet.hide();}});
-      app.on('before-quit',()=>fixture.storage.stop());
-      ipcMain.handle('action',()=>fixture.storage.store());
-      fixture.menu=createPetMenu({getPet:()=>fixture.storage.activeWindow(),snapshot:()=>({state:'idle',activity:{state:'idle'},petStored:fixture.storage.isStored()}),
-        performAction(name){return name==='store-pet'?fixture.storage.store():fixture.storage.restore();},
-        hidePet(){fixture.storage.hide();fixture.pet.hide();},restartApp(){},protect(){},showPanel(){
-          fixture.panelOpens++;fixture.panel.setFocusable(true);fixture.panel.show();fixture.panel.focus();
-        }});
-      fixture.pet.webContents.on('context-menu',fixture.menu.open);
-      fixture.pet.on('hide',fixture.menu.close);
-      await Promise.all([fixture.panel.loadFile(path.join(__dirname,'index.html')),fixture.pet.loadFile(path.join(__dirname,'pet.html'))]);
     });
   `);
   async function launch(role) {
@@ -105,6 +105,9 @@ async function main() {
     assert.deepEqual(await target.evaluate(()=>({activations:fixture.activations,panelFocus:fixture.panelFocus})),before);
     await tab.locator('#pet-storage-tab').click();
     await waitFor(target,f=>!f.storage.isStored()&&f.pet.isVisible());
+    // CDP 点击不会完整模拟 macOS 的原生键窗口切换，单独覆盖还原后人物获得焦点的路径。
+    await target.evaluate(()=>fixture.pet.focus());
+    await waitFor(target,f=>f.pet.isFocused());
     assert.deepEqual(await target.evaluate(()=>({activations:fixture.activations,panelFocus:fixture.panelFocus})),before);
     assert.equal(await cover.evaluate(()=>fixture.active),true,'恢复书签不能抢走其他应用的激活状态');
     await driver.open();await menu.getByRole('menuitem',{name:'收纳到边缘',exact:true}).click();

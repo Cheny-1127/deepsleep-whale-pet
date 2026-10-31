@@ -121,7 +121,8 @@ function createWindows({ snapshot, performAction, collapseReminders, rankingSnap
     const area = screen.getPrimaryDisplay().workArea;
     // macOS 无边框窗口还需关闭原生屏幕约束，否则向上移动仍会停在菜单栏下方。
     pet = new BrowserWindow({ width:220, height:320, x:area.x + area.width - 240, y:area.y + area.height - 340,
-      transparent:true, frame:false, resizable:false, enableLargerThanScreen:true, hasShadow:false, alwaysOnTop:true, skipTaskbar:true, webPreferences:preferences() });
+      // 与收纳标记一致，使用非激活面板；还原后接收点击也不能激活应用、带出后台小屋。
+      type:'panel',transparent:true, frame:false, resizable:false, enableLargerThanScreen:true, hasShadow:false, alwaysOnTop:true, skipTaskbar:true, webPreferences:preferences() });
     protect(pet);
     updatePetMouse();
     pet.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen:true });
