@@ -83,6 +83,49 @@ test('only approvals in the forwarded turn are reviewed once and explicit decisi
   assert.equal(decision.targetClientId,'desktop-owner');assert.equal(decision.version,1);assert.deepEqual(decision.params,{conversationId:'desktop-fixture',requestId:7,decision:'accept'});
   desktop.complete();await task.promise;
 });
+test('unreviewable desktop approvals are declined once without waiting for WeChat',async t=>{
+  const cases=[
+    {name:'missing-command',params:{}},
+    {name:'blank-command',params:{command:' \n '}},
+    {name:'oversized-command',params:{command:'x'.repeat(8001)}},
+    {name:'oversized-reason',params:{command:'pwd',reason:'x'.repeat(8001)}},
+    {name:'session-grant',params:{command:'pwd',grantRoot:'/tmp'}},
+    {name:'missing-file-item',file:true,params:{}},
+    {name:'missing-file-diff',file:true,params:{},changes:[{path:'fixture.txt'}]},
+    {name:'missing-file-path',file:true,params:{},changes:[{diff:'+fixture'}]},
+    {name:'partial-file-diffs',file:true,params:{},changes:[{path:'one.txt',diff:'+one'},{path:'two.txt'}]},
+    {name:'oversized-file-diff',file:true,params:{},changes:[{path:'fixture.txt',diff:'x'.repeat(8001)}]},
+    {name:'no-review-handler',params:{command:'pwd'},noHandler:true}
+  ];
+  for(const value of cases)await t.test(value.name,async t=>{
+    const {desktop,run}=await setup(t);
+    const task=run(value.noHandler?{}:{onApproval:()=>assert.fail('unreviewable request must not ask for approval')});
+    task.promise.catch(()=>{});t.after(()=>{task.cancel();});
+    await until(()=>desktop.wire.some(m=>m.method==='thread-follower-start-turn'));
+    if(value.changes)desktop.state.turnHistory.history.entitiesByKey.current.items=[{id:'own-tool',type:'fileChange',changes:value.changes}];
+    desktop.state.requests=[{id:value.name,method:value.file?'item/fileChange/requestApproval':'item/commandExecution/requestApproval',
+      params:{threadId:'desktop-fixture',turnId:'forwarded-turn',itemId:'own-tool',...value.params}}];
+    desktop.snapshot();desktop.snapshot();
+    const method=value.file?'thread-follower-file-approval-decision':'thread-follower-command-approval-decision';
+    await until(()=>desktop.wire.some(m=>m.method===method));
+    const decisions=desktop.wire.filter(m=>m.method===method);assert.equal(decisions.length,1);
+    assert.equal(decisions[0].targetClientId,'desktop-owner');
+    assert.deepEqual(decisions[0].params,{conversationId:'desktop-fixture',requestId:value.name,decision:'decline'});
+    desktop.complete();await task.promise;
+  });
+});
+test('a complete file diff remains reviewable and returns its decision to the original desktop request',async t=>{
+  const {desktop,run}=await setup(t),reviews=[];
+  const task=run({onApproval:async value=>{reviews.push(value);return true;}});task.promise.catch(()=>{});t.after(()=>task.cancel());
+  await until(()=>desktop.wire.some(m=>m.method==='thread-follower-start-turn'));
+  desktop.state.turnHistory.history.entitiesByKey.current.items=[{id:'own-file',type:'fileChange',changes:[{path:'fixture.txt',diff:'-before\n+after'}]}];
+  desktop.state.requests=[{id:'file-request',method:'item/fileChange/requestApproval',params:{threadId:'desktop-fixture',turnId:'forwarded-turn',itemId:'own-file',reason:'fixture'}}];
+  desktop.snapshot();await until(()=>desktop.wire.some(m=>m.method==='thread-follower-file-approval-decision'));
+  assert.equal(reviews.length,1);assert.equal(reviews[0].detail,'fixture.txt\n-before\n+after\nfixture');
+  const decision=desktop.wire.find(m=>m.method==='thread-follower-file-approval-decision');
+  assert.equal(decision.targetClientId,'desktop-owner');assert.deepEqual(decision.params,{conversationId:'desktop-fixture',requestId:'file-request',decision:'accept'});
+  desktop.complete();await task.promise;
+});
 test('a desktop-resolved request cannot be approved again by a late WeChat response',async t=>{
   const {desktop,run}=await setup(t);let decide;
   const task=run({onApproval:()=>new Promise(resolve=>{decide=resolve;})});

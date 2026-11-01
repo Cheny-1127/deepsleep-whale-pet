@@ -168,15 +168,19 @@ function startDesktopAgent({settings,text:prompt,session,onSession=()=>{},onChec
   let cancelCode='CANCELLED';
   function cancel(code='CANCELLED'){cancelled=true;cancelCode=code;void interrupt(code);}
   function reviewApprovals(own) {
-    if(!onApproval||!turnId||own?.status!=='inProgress')return;
+    if(!turnId||own?.status!=='inProgress')return;
     for(const entry of projection.data.requests||[]) {
       if(!entry||reviewed.has(entry.id)||entry.id===null||entry.params.threadId!==session||entry.params.turnId!==turnId)continue;
       const command=entry.method==='item/commandExecution/requestApproval',file=entry.method==='item/fileChange/requestApproval';
       if(!command&&!file)continue;
-      const detail=command?entry.params.command:own.items.find(item=>item?.type==='fileChange'&&item.id===entry.params.itemId)?.changes?.map(change=>`${change.path}\n${change.diff||''}`).join('\n');
-      if(!detail||detail.length>8000||entry.params.grantRoot)continue;
+      const changes=file?own.items.find(item=>item?.type==='fileChange'&&item.id===entry.params.itemId)?.changes:null;
+      const complete=Array.isArray(changes)&&changes.length>0&&changes.every(change=>text(change?.path)?.trim()&&text(change?.diff)?.trim());
+      const content=command?text(entry.params.command):complete?changes.map(change=>`${change.path}\n${change.diff}`).join('\n'):null;
+      const detail=[content,text(entry.params.reason)].filter(Boolean).join('\n');
+      const reviewable=Boolean(content?.trim())&&detail.length<=8000&&!entry.params.grantRoot;
       reviewed.add(entry.id);
-      void Promise.resolve().then(()=>onApproval({kind:command?'command':'file',detail:[detail,entry.params.reason].filter(Boolean).join('\n'),cwd:entry.params.cwd||settings.cwd}))
+      // 无法审查或没有确认通道时也要回复拒绝，避免请求一直挂在桌面端。
+      void Promise.resolve().then(()=>reviewable&&onApproval?onApproval({kind:command?'command':'file',detail,cwd:entry.params.cwd||settings.cwd}):false)
         .then(accepted=>{
           if(done||cancelled||!projection.data?.requests?.some(current=>current?.id===entry.id&&current.params.turnId===turnId))return;
           return request(command?'thread-follower-command-approval-decision':'thread-follower-file-approval-decision',
