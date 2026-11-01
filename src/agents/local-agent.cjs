@@ -119,7 +119,7 @@ function startLocalAgent({settings,text,session,onSession=()=>{},onApproval=asyn
     const env={...process.env};
     if(settings.backend==='codex'&&settings.configHome)env.CODEX_HOME=settings.configHome;
     const args=settings.backend==='codex'?[...(settings.profile?['--profile',settings.profile]:[]),'app-server']:
-      ['--mode','ask','--sandbox','enabled','--print','--output-format','json',...(session?['--resume',session]:[]),text];
+      ['--mode','ask','--sandbox','enabled','--print','--output-format','json',...(session?['--resume',session]:[]),'--',text];
     child=spawnImpl(binary,args,{cwd:settings.cwd,env,stdio:['pipe','pipe','pipe'],detached:process.platform!=='win32'});
     child.on('error',()=>finish(new AgentError('SPAWN','spawn')));
     child.stdin.on('error',()=>finish(new AgentError('CONNECTION',stage)));

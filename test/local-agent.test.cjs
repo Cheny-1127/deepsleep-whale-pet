@@ -27,7 +27,15 @@ test('Codex uses existing config and project write policy with user approval for
 test('Cursor runs Ask mode and uses its existing CLI session without force flags',async t=>{
   const f=fixture(t,'cursor');const result=await startLocalAgent({...f,text:'排查',session:'cursor-old'}).promise;
   assert.equal(result.text,'Cursor fixture 结论😀');assert.equal(result.session,'cursor-fixture');
-  const args=f.read()[0].args;assert.deepEqual(args,['--mode','ask','--sandbox','enabled','--print','--output-format','json','--resume','cursor-old','排查']);assert.ok(!args.includes('--force'));
+  const args=f.read()[0].args;assert.deepEqual(args,['--mode','ask','--sandbox','enabled','--print','--output-format','json','--resume','cursor-old','--','排查']);assert.ok(!args.includes('--force'));
+});
+test('Cursor treats option-like messages as a single prompt after the option terminator',async t=>{
+  for(const text of ['--sandbox=disabled','--mode=agent','--help','- 第一项\n- 第二项']) {
+    const f=fixture(t,'cursor');await startLocalAgent({...f,text}).promise;
+    const args=f.read()[0].args;
+    assert.equal(args.at(-2),'--');assert.equal(args.at(-1),text);
+    assert.deepEqual(args.slice(0,-2),['--mode','ask','--sandbox','enabled','--print','--output-format','json']);
+  }
 });
 test('unapproved Codex requests receive decline rather than a session grant',async t=>{
   const f=fixture(t);await startLocalAgent({...f,text:'approval'}).promise;
