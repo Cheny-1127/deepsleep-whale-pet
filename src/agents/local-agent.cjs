@@ -6,6 +6,7 @@ const os=require('node:os');
 const {findCodex}=require('../hooks/availability.cjs');
 const {AgentError,rpcFailure}=require('./agent-error.cjs');
 const {normalizeQuestions,normalizeAnswer,asyncQuestions,asyncReply}=require('./user-input.cjs');
+const {childEnvironment}=require('../child-environment.cjs');
 function executable(file) {try {return path.isAbsolute(file)&&fs.statSync(file).isFile()&&(fs.accessSync(file,fs.constants.X_OK)===undefined);}catch{return false;}}
 function resolveBinary(settings) {
   if(settings.binary) {if(!executable(settings.binary))throw new Error('客户端可执行文件不存在或不可执行');return settings.binary;}
@@ -116,7 +117,7 @@ function startLocalAgent({settings,text,session,onSession=()=>{},onApproval=asyn
   }
   async function boot() {
     let binary;try{binary=resolveBinary(settings);}catch{throw new AgentError('BINARY','spawn');}
-    const env={...process.env};
+    const env=childEnvironment();
     if(settings.backend==='codex'&&settings.configHome)env.CODEX_HOME=settings.configHome;
     const args=settings.backend==='codex'?[...(settings.profile?['--profile',settings.profile]:[]),'app-server']:
       ['--mode','ask','--sandbox','enabled','--print','--output-format','json',...(session?['--resume',session]:[]),'--',text];

@@ -2,6 +2,7 @@
 const {spawn}=require('node:child_process');
 const os=require('node:os');
 const {resolveBinary,validateSettings}=require('./local-agent.cjs');
+const {childEnvironment}=require('../child-environment.cjs');
 // 仅查询公共元信息接口；正文、预览、认证与客户端日志不进入网关快照或微信列表。
 function queryCodex(settings,method,params,{spawnImpl=spawn,timeoutMs=15000,signal}={}) {
   return new Promise((resolve,reject)=>{
@@ -14,7 +15,7 @@ function queryCodex(settings,method,params,{spawnImpl=spawn,timeoutMs=15000,sign
     try {
       if(settings.backend!=='codex'||!['thread/list','thread/read'].includes(method))throw new Error('此客户端不支持共享对话查询');
       settings=validateSettings(settings,{requireCwd:false});
-      const env={...process.env};if(settings.configHome)env.CODEX_HOME=settings.configHome;
+      const env=childEnvironment();if(settings.configHome)env.CODEX_HOME=settings.configHome;
       child=spawnImpl(resolveBinary(settings),[...(settings.profile?['--profile',settings.profile]:[]),'app-server'],{cwd:settings.cwd||os.homedir(),env,stdio:['pipe','pipe','pipe']});
       const send=value=>{if(!done)child.stdin.write(JSON.stringify(value)+'\n');};
       child.stderr.on('data',()=>{});

@@ -37,6 +37,19 @@ test('Cursor treats option-like messages as a single prompt after the option ter
     assert.deepEqual(args.slice(0,-2),['--mode','ask','--sandbox','enabled','--print','--output-format','json']);
   }
 });
+test('agent children omit DeepSleep private environment while retaining client authentication and proxies',async t=>{
+  const values={WHALE_QUOTA_API_KEY:'fixture-quota',WHALE_REPORT_JENKINS_TOKEN:'fixture-jenkins',WHALE_FUTURE_SECRET:'fixture-private',OPENAI_API_KEY:'fixture-client',HTTPS_PROXY:'http://proxy.fixture.invalid'};
+  const previous=Object.fromEntries(Object.keys(values).map(key=>[key,process.env[key]]));
+  t.after(()=>{for(const [key,value]of Object.entries(previous))if(value===undefined)delete process.env[key];else process.env[key]=value;});
+  Object.assign(process.env,values);
+  for(const backend of ['codex','cursor']) {
+    const f=fixture(t,backend);let environment;
+    await startLocalAgent({...f,text:'环境隔离检查',spawnImpl:(bin,args,options)=>{environment=options.env;return f.spawnImpl(bin,args,options);}}).promise;
+    for(const key of Object.keys(values).filter(key=>key.startsWith('WHALE_')))assert.equal(environment[key],undefined,key);
+    assert.equal(environment.OPENAI_API_KEY,values.OPENAI_API_KEY);assert.equal(environment.HTTPS_PROXY,values.HTTPS_PROXY);assert.equal(environment.PATH,process.env.PATH);
+    if(backend==='codex')assert.equal(environment.CODEX_HOME,f.settings.configHome);
+  }
+});
 test('unapproved Codex requests receive decline rather than a session grant',async t=>{
   const f=fixture(t);await startLocalAgent({...f,text:'approval'}).promise;
   assert.equal(f.read().find(item=>item.approval).approval.decision,'decline');

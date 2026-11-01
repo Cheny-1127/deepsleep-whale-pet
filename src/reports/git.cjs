@@ -1,12 +1,13 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path'),{execFile}=require('node:child_process'),{promisify}=require('node:util'),{createHash}=require('node:crypto');
 const {dateKey}=require('./model.cjs');
+const {childEnvironment}=require('../child-environment.cjs');
 const exec=promisify(execFile);
 function safe(message){return Object.assign(Error(message),{reportSafe:true});}
 async function collectGit(source,{since,until,signal}={}){
   let directory;try{directory=fs.realpathSync(source.path);if(!path.isAbsolute(directory))throw Error();}catch{throw safe('Git 仓库目录不可访问，请检查本机路径');}
   const authors=new Set(source.authors.split(',').map(value=>value.trim().toLowerCase()).filter(Boolean));if(!authors.size)throw safe('请配置要采集的 Git 作者邮箱');
-  const options={cwd:directory,encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,signal,env:{...process.env,GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0'}};
+  const options={cwd:directory,encoding:'utf8',timeout:30000,maxBuffer:4*1024*1024,signal,env:{...childEnvironment(),GIT_TERMINAL_PROMPT:'0',GIT_OPTIONAL_LOCKS:'0'}};
   try{
     const {stdout:root}=await exec('git',['-c','core.fsmonitor=false','rev-parse','--show-toplevel'],options);
     directory=fs.realpathSync(root.trim());

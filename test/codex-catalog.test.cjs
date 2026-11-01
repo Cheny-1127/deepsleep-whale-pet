@@ -2,7 +2,17 @@
 const {test}=require('node:test'),assert=require('node:assert/strict');
 const fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {spawn}=require('node:child_process');
-const {listCodexThreads,readCodexThread,projectThread}=require('../src/agents/codex-catalog.cjs');
+const {queryCodex,listCodexThreads,readCodexThread,projectThread}=require('../src/agents/codex-catalog.cjs');
+test('metadata client does not inherit DeepSleep management credentials',async t=>{
+  const values={WHALE_QUOTA_API_KEY:'fixture-quota',WHALE_REPORT_JENKINS_TOKEN:'fixture-jenkins'};
+  const previous=Object.fromEntries(Object.keys(values).map(key=>[key,process.env[key]]));
+  t.after(()=>{for(const [key,value]of Object.entries(previous))if(value===undefined)delete process.env[key];else process.env[key]=value;});
+  Object.assign(process.env,values);let environment;
+  await assert.rejects(queryCodex({backend:'codex',binary:process.execPath,cwd:process.cwd(),configHome:os.tmpdir()},'thread/list',{},
+    {spawnImpl:(_bin,_args,options)=>{environment=options.env;throw Error('fixture stopped before spawn');}}),/fixture stopped/);
+  for(const key of Object.keys(values))assert.equal(environment[key],undefined,key);
+  assert.equal(environment.CODEX_HOME,os.tmpdir());assert.equal(environment.PATH,process.env.PATH);
+});
 test('catalog queries the selected configuration and all interactive sources without exposing previews or running tasks',async t=>{
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-catalog-'));t.after(()=>fs.rmSync(dir,{recursive:true,force:true}));
   const binary=path.join(dir,'codex-fixture'),log=path.join(dir,'wire.jsonl');
