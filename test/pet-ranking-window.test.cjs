@@ -5,10 +5,10 @@ function fixture(x = 800) {
   const ipcMain = new EventEmitter(), handlers = new Map(), windows = [];
   ipcMain.handle = (name, fn) => handlers.set(name, fn);
   class Window extends EventEmitter {
-    constructor() {super();this.visible = false;this.bounds = {};this.webContents = {mainFrame:{},setWindowOpenHandler(){}};windows.push(this);}
+    constructor(options) {super();this.options=options;this.visible = false;this.bounds = {};this.webContents = {mainFrame:{},setWindowOpenHandler(){}};windows.push(this);}
     isDestroyed() {return false;} isVisible() {return this.visible;} loadFile() {return Promise.resolve();}
     setVisibleOnAllWorkspaces() {} setBounds(value) {this.bounds = value;} getBounds() {return this.bounds;}
-    show() {this.visible = true;} hide() {this.visible = false;} focus() {}
+    show() {this.visible = true;} hide() {this.visible = false;} focus() {this.focused=true;}
   }
   const anchors = new Map([['pet-art',{left:30,right:190,top:96,bottom:272}],['pet-quota-controls',{left:30,right:190,top:243,bottom:272}],
     ['pet-quota-config-2',{left:30,right:190,top:276,bottom:305}],['pet-quota-config-3',{left:30,right:190,top:309,bottom:338}]]);
@@ -26,6 +26,7 @@ test('ranking sits beside the pet, flips at the left edge, fits the screen and s
   for (const x of [800, 0]) {
     const f = fixture(x);await f.api.toggle();const panel = f.windows[0], before = f.pet.getContentBounds();
     assert.equal(panel.visible, true);assert.equal(f.api.isOpen(), true);
+    assert.equal(panel.options.type,'panel');assert.equal(panel.focused,true,'the nonactivating ranking must retain keyboard focus');
     assert.ok(panel.bounds.x >= 0 && panel.bounds.x + panel.bounds.width <= f.area.width);
     assert.ok(x === 800 ? panel.bounds.x + panel.bounds.width < x + 30 : panel.bounds.x > x + 190);
     const event = {sender:panel.webContents, senderFrame:panel.webContents.mainFrame};

@@ -11,13 +11,14 @@ function fixture(startOptions,{loadTab=()=>Promise.resolve()}={}) {
   const data={state:'idle',activity:{pending:0,unread:0,working:0},planner:{active:[]}};
   ipcMain.handle=(name,handler)=>handlers.set(name,handler);
   class Window extends EventEmitter {
-    constructor(options){super();this.bounds={...options};this.ignored=[];this.visible=options.show!==false;this.messages=[];
+    constructor(options){super();this.options=options;this.bounds={...options};this.ignored=[];this.visible=options.show!==false;this.messages=[];
       this.webContents=new EventEmitter();this.webContents.mainFrame={};this.webContents.setWindowOpenHandler=()=>{};
       this.webContents.send=(...args)=>this.messages.push(args);windows.push(this);}
     loadFile(file){return file.endsWith('pet-storage.html')?loadTab():Promise.resolve();}
     setVisibleOnAllWorkspaces(){}isDestroyed(){return Boolean(this.destroyed);}isVisible(){return this.visible;}
     destroy(){this.destroyed=true;this.visible=false;this.emit('closed');}
     hide(){this.visible=false;this.emit('hide');}showInactive(){this.visible=true;this.emit('show');}
+    show(){this.visible=true;this.emit('show');}focus(){this.focused=true;}
     setIgnoreMouseEvents(ignore,options){this.ignored.push({ignore,...options});}
     getBounds(){const {x,y,width,height}=this.bounds;return {x,y,width,height};}getContentBounds(){return this.getBounds();}
     setPosition(x,y){Object.assign(this.bounds,{x,y});this.emit('move');}
@@ -85,6 +86,19 @@ test('account picker skips opening when at most one account is available',async(
     assert.equal(await f.api.chooseTrackingAccount(accounts,1),null);
     assert.equal(f.windows.length,1,'must not create an account picker window');
   }
+});
+test('account picker uses a nonactivating panel and still accepts an account selection',async()=>{
+  const f=fixture();f.pet.webContents.executeJavaScript=async()=>({left:30,right:190,bottom:272});
+  const selection=f.api.chooseTrackingAccount([{id:1,name:'一号'},{id:2,name:'二号'}],1);
+  await new Promise(resolve=>setImmediate(resolve));
+  const picker=f.windows.find(win=>win.options.width===300);
+  assert.equal(picker.options.type,'panel');assert.equal(picker.isVisible(),true);assert.equal(picker.focused,true);
+  assert.equal(f.panel.focused,undefined,'opening the picker must not focus the house');
+  const event={sender:picker.webContents,senderFrame:picker.webContents.mainFrame};
+  f.ipcMain.emit('pet-accounts-select',{...event,senderFrame:{}},2);
+  assert.equal(picker.isVisible(),true,'child frames cannot select an account');
+  f.ipcMain.emit('pet-accounts-select',event,2);
+  assert.equal(await selection,2);assert.equal(picker.isVisible(),false);
 });
 
 test('storing releases the character window and restores its position without opening the panel',async()=>{

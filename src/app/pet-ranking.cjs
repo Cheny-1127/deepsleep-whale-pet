@@ -19,7 +19,7 @@ function createPetRanking({getPet, snapshot, refresh, select, protect}) {
     if (request !== sequence || !anchor || !['left', 'right', 'top', 'bottom'].every(key => Number.isFinite(anchor[key]))) return;
     if (!panel || panel.isDestroyed()) {
       panel = new BrowserWindow({width:306, height:320, show:false, transparent:true, frame:false, resizable:false,
-        hasShadow:false, alwaysOnTop:true, skipTaskbar:true,
+        type:'panel', hasShadow:false, alwaysOnTop:true, skipTaskbar:true,
         webPreferences:{preload:path.join(__dirname, '../ui/pet-ranking-preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true}});
       protect(panel);panel.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen:true});
       panel.on('blur', close);

@@ -7,7 +7,7 @@ async function main() {
   if(process.platform!=='darwin'){console.log('Pet menu focus: macOS only');return;}
   const {_electron:electron}=require(process.env.PLAYWRIGHT_MODULE||'playwright');
   const dir=fs.mkdtempSync(path.join(os.tmpdir(),'whale-menu-focus-')),apps=[],errors=[];
-  fs.writeFileSync(path.join(dir,'pet.html'),'<div id="pet-art" style="width:180px;height:220px;background:#dbe8e0">测试桌宠</div><button id="pet-store-button">收纳</button><script>document.getElementById("pet-store-button").onclick=()=>window.whale.action("store-pet");</script>');
+  fs.writeFileSync(path.join(dir,'pet.html'),'<div id="pet-art" style="width:180px;height:220px;background:#dbe8e0">测试桌宠</div><div id="pet-quota-controls">测试额度</div><button id="pet-store-button">收纳</button><script>document.getElementById("pet-store-button").onclick=()=>window.whale.action("store-pet");</script>');
   fs.writeFileSync(path.join(dir,'index.html'),'<p>测试小屋</p>');
   fs.writeFileSync(path.join(dir,'cover.html'),'<p>模拟遮挡小屋的其他应用</p>');
   fs.writeFileSync(path.join(dir,'bootstrap.cjs'),`
@@ -30,6 +30,7 @@ async function main() {
       const loadFile=BrowserWindow.prototype.loadFile;
       BrowserWindow.prototype.loadFile=function(file,...args){
         const name=path.basename(file);
+        if(name==='pet-accounts.html')fixture.accountsWindow=this;
         return loadFile.call(this,['index.html','pet.html'].includes(name)?path.join(__dirname,name):file,...args);
       };
       const menuModule=require(${JSON.stringify(path.join(root,'src/app/pet-menu.cjs'))}),makeMenu=menuModule.createPetMenu;
@@ -39,7 +40,8 @@ async function main() {
       const {createWindows}=require(${JSON.stringify(path.join(root,'src/app/windows.cjs'))});
       const snapshot=()=>({state:'idle',activity:{state:'idle',pending:0,working:0,unread:0},planner:{active:[]}});
       const performAction=name=>name==='store-pet'?fixture.windows.storePet():fixture.windows.showPet();
-      fixture.windows=createWindows({snapshot,performAction,collapseReminders(){}});
+      const rankingSnapshot=()=>({users:[],groups:[],groupId:null,groupName:'全部分组',checkedAt:null,busy:false,error:'',source:{configName:'测试配置',accountName:'测试账号'}});
+      fixture.windows=createWindows({snapshot,performAction,collapseReminders(){},rankingSnapshot,rankingRefresh:rankingSnapshot,rankingSelect:rankingSnapshot});
       ipcMain.handle('action',(_event,name)=>performAction(name));
       fixture.windows.start({showPanelOnStartup:true});
       fixture.panel=BrowserWindow.getAllWindows().find(win=>win.getBounds().width===1060);
@@ -126,6 +128,24 @@ async function main() {
     await waitFor(target,f=>!f.storage.isStored()&&f.pet.isVisible());
     await target.evaluate(()=>fixture.pet.setFocusable(false));
     await target.evaluate(()=>fixture.pet.showInactive());
+    // 额度账号窗和榜单也应只取得键盘焦点，不激活后台小屋。
+    await target.evaluate(()=>{
+      fixture.windows.chooseTrackingAccount([{id:1,name:'测试一号'},{id:2,name:'测试二号'}],1).then(id=>{fixture.selectedAccount=id;});
+    });
+    await waitFor(target,f=>f.accountsWindow?.isFocused());
+    const accounts=target.windows().find(page=>page.url().endsWith('/pet-accounts.html'));
+    await accounts.getByRole('radio',{name:/测试一号/}).waitFor();
+    assert.deepEqual(await target.evaluate(()=>({activations:fixture.activations,panelFocus:fixture.panelFocus})),before);
+    assert.equal(await cover.evaluate(()=>fixture.active),true,'账号窗不能激活后台小屋');
+    await accounts.keyboard.press('ArrowDown');await accounts.keyboard.press('Enter');
+    await waitFor(target,f=>f.selectedAccount===2&&!f.accountsWindow.isVisible());
+    await target.evaluate(()=>fixture.windows.toggleRanking('primary'));
+    await target.evaluate(({BrowserWindow})=>{fixture.rankingWindow=BrowserWindow.getAllWindows().find(win=>win.webContents.getURL().endsWith('/pet-ranking.html'));});
+    await waitFor(target,f=>f.rankingWindow?.isFocused());
+    const ranking=target.windows().find(page=>page.url().endsWith('/pet-ranking.html'));
+    assert.deepEqual(await target.evaluate(()=>({activations:fixture.activations,panelFocus:fixture.panelFocus})),before);
+    assert.equal(await cover.evaluate(()=>fixture.active),true,'榜单不能激活后台小屋');
+    await ranking.keyboard.press('Escape');await waitFor(target,f=>!f.rankingWindow.isVisible());
     await driver.open();await menu.getByRole('menuitem',{name:'打开小屋',exact:true}).click();
     await waitFor(target,f=>f.panelOpens===1&&f.panel.isFocused()&&f.active);
     await coverPanel();await driver.open();
@@ -138,7 +158,7 @@ async function main() {
     await waitFor(target,f=>!f.menu.isOpen());
     assert.equal((await driver.geometry()).visible,false,'Esc 仍会关闭菜单');
     assert.deepEqual(errors,[]);
-    console.log('Pet menu focus OK: background house preserved, mouse/keyboard hide, store/bookmark/menu restore, explicit house opening, blur/Esc dismissal');
+    console.log('Pet menu focus OK: background house preserved, mouse/keyboard hide, store/bookmark/menu restore, account selection, ranking, explicit house opening, blur/Esc dismissal');
   } catch(error) {
     for(const app of apps)console.error(await app.evaluate(({BrowserWindow})=>({events:fixture.events.slice(-24),active:fixture.active,
       windows:BrowserWindow.getAllWindows().map(win=>({id:win.id,visible:win.isVisible(),focused:win.isFocused()}))})));

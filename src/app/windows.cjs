@@ -72,7 +72,7 @@ function createWindows({ snapshot, performAction, collapseReminders, rankingSnap
     if (request !== accountSequence || pet.isDestroyed() || !pet.isVisible()) return null;
     if (!accountPanel || accountPanel.isDestroyed()) {
       accountPanel = new BrowserWindow({width:300, height:320, show:false, transparent:true, frame:false, resizable:false,
-        hasShadow:false, alwaysOnTop:true, skipTaskbar:true,
+        type:'panel', hasShadow:false, alwaysOnTop:true, skipTaskbar:true,
         webPreferences:{preload:path.join(__dirname, '../ui/pet-accounts-preload.cjs'), contextIsolation:true, nodeIntegration:false, sandbox:true}});
       protect(accountPanel);accountPanel.setVisibleOnAllWorkspaces(true, {visibleOnFullScreen:true});
       accountPanel.on('blur', () => closeAccountMenu());
