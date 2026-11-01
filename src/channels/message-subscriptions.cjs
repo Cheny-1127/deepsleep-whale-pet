@@ -4,10 +4,17 @@ const {createHash} = require('node:crypto');
 const {displayName, xUsername, validPostId, compareIds, projectPost} = require('./x-posts.cjs');
 const {avatarData} = require('./subscription-avatar.cjs');
 const {TEXT_LIMIT} = require('./subscription-translation.cjs');
-const INTERVAL = 60 * 60 * 1000, LIMIT = 100, ACCOUNT_LIMIT = 20;
+const INTERVAL = 60 * 60 * 1000, LIMIT = 100, ACCOUNT_LIMIT = 20, DELETED_LIMIT = 1000;
 const stamp = value => value === null || Number.isSafeInteger(value) && value >= 0;
 const sourceHash = post => createHash('sha256').update(JSON.stringify([post.text,post.truncated])).digest('hex');
 const postKey = post => `${post.username}/${post.id}`;
+function compactDeleted(account) {
+  const ids = [...new Set(account.deletedIds)].filter(id => !account.deletedThroughId || compareIds(id,account.deletedThroughId) > 0)
+    .sort((a,b) => compareIds(b,a));
+  // 淘汰的旧 ID 合并为截止线，避免限制记录数量后又把删过的帖子抓回来。
+  if (ids.length > DELETED_LIMIT) account.deletedThroughId = ids[DELETED_LIMIT];
+  account.deletedIds = ids.slice(0,DELETED_LIMIT);
+}
 // 备注和推荐理由只接受短单行文本，避免异常输入写入本地配置。
 function remarkText(value = '', label = '备注') {
   if (typeof value !== 'string' || value.length > 200 || /[\u0000-\u001f\u007f]/.test(value)) throw Error(`${label}须为 200 字以内的单行文字。`);
@@ -44,12 +51,14 @@ function createMessageSubscriptions({dataDir, readPosts, translateText, onChange
           !stamp(a.attemptedAt) || !stamp(a.checkedAt) || (a.latestId !== null && !validPostId(a.latestId)) ||
           !Array.isArray(a.unreadIds) || a.unreadIds.length > LIMIT || !a.unreadIds.every(validPostId) ||
           !Array.isArray(a.posts) || a.posts.length > LIMIT ||
-          (a.deletedIds !== undefined && (!Array.isArray(a.deletedIds) || !a.deletedIds.every(validPostId)))) throw Error();
+          (a.deletedIds !== undefined && (!Array.isArray(a.deletedIds) || !a.deletedIds.every(validPostId))) ||
+          (a.deletedThroughId != null && !validPostId(a.deletedThroughId))) throw Error();
         names.add(username);
         // v1 无法区分默认已读和实际阅读，按本次约定一次性恢复现有缓存为未读。
-        return {username, remark:typeof a.remark === 'string' ? remarkText(a.remark) : '', deletedIds:[...new Set(a.deletedIds || [])], displayName:displayName(a.displayName), avatar:avatarData(a.avatar), enabled:a.enabled, initialized:a.initialized, latestId:a.latestId, unreadIds:[...new Set([...a.unreadIds,...(saved.version === 1 ? a.posts.map(p=>p.id) : [])])].sort((a,b)=>compareIds(b,a)).slice(0,LIMIT),
+        const account = {username, remark:typeof a.remark === 'string' ? remarkText(a.remark) : '', deletedIds:a.deletedIds || [], deletedThroughId:a.deletedThroughId ?? null, displayName:displayName(a.displayName), avatar:avatarData(a.avatar), enabled:a.enabled, initialized:a.initialized, latestId:a.latestId, unreadIds:[...new Set([...a.unreadIds,...(saved.version === 1 ? a.posts.map(p=>p.id) : [])])].sort((a,b)=>compareIds(b,a)).slice(0,LIMIT),
           attemptedAt:a.attemptedAt, checkedAt:a.checkedAt, error:typeof a.error === 'string' ? a.error.slice(0, 160) : '',
           posts:a.posts.map(item => cachedPost(item, username, clock.now()))};
+        compactDeleted(account);return account;
       });
     }
   } catch {state = {version:2, accounts:[], recommendationReasons:{}};blocked = true;storeError = '消息订阅文件无法读取，原文件已保留，请检查本地文件后重启。';}
@@ -117,9 +126,10 @@ function createMessageSubscriptions({dataDir, readPosts, translateText, onChange
           if (closed || epoch !== batch) break;
           if (!Array.isArray(result) || result.length > LIMIT) throw Error('invalid response');
           const next = structuredClone(state);a = next.accounts.find(item => item.username === username);
-          // 删除记录只保留去重 ID；按最新状态过滤，避免在途检查把已经删除的正文写回。
-          const deleted = new Set(a.deletedIds);
-          const incoming = result.map(item => projectPost(item, username, clock.now())).filter(post=>!deleted.has(post.id));
+          // 按最新删除记录及截止线过滤；已有旧缓存可更新，未缓存的截止线之前帖子不再回填。
+          const deleted = new Set(a.deletedIds), retained = new Set(a.posts.map(post=>post.id));
+          const incoming = result.map(item => projectPost(item, username, clock.now())).filter(post=>!deleted.has(post.id) &&
+            (!a.deletedThroughId || compareIds(post.id,a.deletedThroughId) > 0 || retained.has(post.id)));
           // 头像按账号只存一份；抓取失败保留已有图片，避免每条动态重复占用缓存。
           a.avatar = result.map(item=>avatarData(item.avatar)).find(Boolean) || a.avatar || '';
           // 昵称属于账号资料，独立于正文缓存保存；偶尔读取不到时保留已有昵称。
@@ -161,7 +171,7 @@ function createMessageSubscriptions({dataDir, readPosts, translateText, onChange
     return mutate(next => {
       if (next.accounts.some(a => a.username === username)) throw Error('这个账号已在订阅列表中。');
       if (next.accounts.length >= ACCOUNT_LIMIT) throw Error(`最多订阅 ${ACCOUNT_LIMIT} 个账号。`);
-      next.accounts.push({username, remark, enabled:true, initialized:false, latestId:null, unreadIds:[], deletedIds:[], posts:[], checkedAt:null, attemptedAt:null, error:''});
+      next.accounts.push({username, remark, enabled:true, initialized:false, latestId:null, unreadIds:[], deletedIds:[], deletedThroughId:null, posts:[], checkedAt:null, attemptedAt:null, error:''});
     });
   }
   function setRecommendationReason(value) {
@@ -204,6 +214,7 @@ function createMessageSubscriptions({dataDir, readPosts, translateText, onChange
       a.posts = a.posts.filter(p=>p.id !== value.id);
       a.unreadIds = a.unreadIds.filter(id=>id !== value.id);
       a.deletedIds = [...new Set([...a.deletedIds,value.id])];
+      compactDeleted(a);
     });
   }
   function postUrl(value) {

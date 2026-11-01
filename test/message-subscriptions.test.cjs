@@ -72,6 +72,43 @@ test('deleting a post removes source, translation and unread from disk, and refr
   restarted.clearCache();await restarted.refresh();assert.equal(restarted.snapshot().posts.length,1);
   assert.throws(()=>restarted.deletePost(value),/不存在/);
 });
+test('legacy deletion history is bounded without restoring deleted posts across refresh, clear and restart',async t=>{
+  const f=fixture(t),s=f.service;s.add('thsottiaux');
+  f.setResponse(async()=>[f.post(1),f.post(1200)]);await s.refresh();s.close();
+  const file=path.join(f.dir,'message-subscriptions.json'),saved=JSON.parse(fs.readFileSync(file,'utf8'));
+  saved.accounts[0].deletedIds=Array.from({length:1100},(_,i)=>f.post(i+2).id);
+  fs.writeFileSync(file,JSON.stringify(saved));const original=fs.readFileSync(file,'utf8');
+  const upgraded=f.create();assert.equal(fs.readFileSync(file,'utf8'),original,'loading must not rewrite the existing file');
+  upgraded.setRemark({username:'thsottiaux',remark:'保留配置'});
+  let account=JSON.parse(fs.readFileSync(file,'utf8')).accounts[0];
+  assert.equal(account.deletedIds.length,1000);assert.equal(account.deletedThroughId,f.post(101).id);
+  assert.equal(new Set(account.deletedIds).size,1000);
+  f.setResponse(async()=>[f.post(1200),f.post(102),f.post(101),f.post(2),{...f.post(1),text:'保留的旧缓存仍可更新'}]);
+  await upgraded.refresh();assert.deepEqual(upgraded.snapshot().posts.map(p=>p.id),[f.post(1200).id,f.post(1).id]);
+  assert.equal(upgraded.snapshot().posts[1].text,'保留的旧缓存仍可更新');
+  const beforeDelete=fs.readFileSync(file,'utf8');fs.mkdirSync(file+'.tmp');
+  assert.throws(()=>upgraded.deletePost({username:'thsottiaux',id:f.post(1200).id}),/保存失败/);
+  assert.equal(fs.readFileSync(file,'utf8'),beforeDelete);assert.equal(upgraded.snapshot().posts.length,2);
+  fs.rmdirSync(file+'.tmp');upgraded.deletePost({username:'thsottiaux',id:f.post(1200).id});
+  account=JSON.parse(fs.readFileSync(file,'utf8')).accounts[0];
+  assert.equal(account.deletedIds.length,1000);assert.equal(account.deletedThroughId,f.post(102).id);
+  // 已缓存且早于截止线的帖子仍可删除，不能把截止线倒退。
+  upgraded.deletePost({username:'thsottiaux',id:f.post(1).id});
+  assert.equal(JSON.parse(fs.readFileSync(file,'utf8')).accounts[0].deletedThroughId,f.post(102).id);
+  upgraded.clearCache();upgraded.close();const restarted=f.create();
+  f.setResponse(async()=>[f.post(1201),f.post(1200),f.post(102),f.post(2),f.post(1)]);await restarted.refresh();
+  assert.deepEqual(restarted.snapshot().posts.map(p=>p.id),[f.post(1201).id]);
+  restarted.remove('thsottiaux');restarted.add('thsottiaux');await restarted.refresh();
+  assert.equal(restarted.snapshot().posts.length,5,'removing and readding the subscription resets deletion history');
+});
+test('an invalid deletion cutoff preserves the original subscription file and blocks writes',t=>{
+  const f=fixture(t),s=f.service;s.add('thsottiaux');s.close();
+  const file=path.join(f.dir,'message-subscriptions.json'),saved=JSON.parse(fs.readFileSync(file,'utf8'));
+  saved.accounts[0].deletedThroughId='invalid';fs.writeFileSync(file,JSON.stringify(saved));
+  const original=fs.readFileSync(file,'utf8'),restarted=f.create();
+  assert.match(restarted.snapshot().storeError,/无法读取/);assert.throws(()=>restarted.add('openai'),/无法读取/);
+  assert.equal(fs.readFileSync(file,'utf8'),original);
+});
 test('deleting during an in-flight refresh or translation prevents late content from returning',async t=>{
   const f=fixture(t),s=f.service;s.add('thsottiaux');await s.refresh();let readDone,translateDone;
   f.setResponse(()=>new Promise(resolve=>{readDone=resolve;}));
